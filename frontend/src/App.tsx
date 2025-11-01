@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef } from 'react'
 import { 
   Excalidraw, 
   convertToExcalidrawElements, 
-  CaptureUpdateAction
+  CaptureUpdateAction,
+  exportToBlob,
+  exportToSvg
 } from '@excalidraw/excalidraw'
 import { convertMermaidToExcalidraw, DEFAULT_MERMAID_CONFIG } from './utils/mermaidConverter'
 
@@ -327,6 +329,17 @@ function App(): JSX.Element {
           }
           break
           
+        case 'export_request':
+          console.log('Received export request from MCP')
+          if ((data as any).format) {
+            try {
+              await handleExport((data as any).format, (data as any).theme || 'light', (data as any).filename)
+            } catch (error) {
+              console.error('Error exporting canvas:', error)
+            }
+          }
+          break
+          
         default:
           console.log('Unknown WebSocket message type:', data.type)
       }
@@ -350,6 +363,105 @@ function App(): JSX.Element {
       minute: '2-digit',
       second: '2-digit'
     })
+  }
+
+  // Export canvas function
+  const handleExport = async (format: 'png' | 'svg', theme: 'light' | 'dark', filename?: string): Promise<void> => {
+    if (!excalidrawAPI) {
+      console.warn('Excalidraw API not available')
+      return
+    }
+
+    try {
+      const elements = excalidrawAPI.getSceneElements()
+      const appState = excalidrawAPI.getAppState()
+      const files = excalidrawAPI.getFiles()
+
+      const exportFileName = filename || `excalidraw-${Date.now()}`
+
+      if (format === 'png') {
+        // Export to PNG
+        const blob = await exportToBlob({
+          elements,
+          appState: {
+            ...appState,
+            exportWithDarkMode: theme === 'dark',
+            exportBackground: true,
+            viewBackgroundColor: theme === 'dark' ? '#1e1e1e' : '#ffffff'
+          },
+          files,
+          mimeType: 'image/png',
+          quality: 0.95
+        })
+
+        // Convert blob to base64
+        const reader = new FileReader()
+        reader.onloadend = async () => {
+          const base64data = reader.result as string
+          
+          // Send to server
+          try {
+            const response = await fetch('/api/export/save', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                filename: exportFileName,
+                format: 'png',
+                data: base64data,
+                dataType: 'base64'
+              })
+            })
+            
+            const result = await response.json()
+            console.log('PNG saved to server:', result.filepath)
+          } catch (error) {
+            console.error('Error saving PNG to server:', error)
+          }
+        }
+        reader.readAsDataURL(blob)
+        
+        console.log('Canvas exported as PNG:', exportFileName)
+      } else if (format === 'svg') {
+        // Export to SVG
+        const svg = await exportToSvg({
+          elements,
+          appState: {
+            ...appState,
+            exportWithDarkMode: theme === 'dark',
+            exportBackground: true,
+            viewBackgroundColor: theme === 'dark' ? '#1e1e1e' : '#ffffff'
+          },
+          files
+        })
+
+        // Convert SVG to string
+        const svgData = new XMLSerializer().serializeToString(svg)
+        
+        // Send to server
+        try {
+          const response = await fetch('/api/export/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: exportFileName,
+              format: 'svg',
+              data: svgData,
+              dataType: 'svg'
+            })
+          })
+          
+          const result = await response.json()
+          console.log('SVG saved to server:', result.filepath)
+        } catch (error) {
+          console.error('Error saving SVG to server:', error)
+        }
+        
+        console.log('Canvas exported as SVG:', exportFileName)
+      }
+    } catch (error) {
+      console.error('Error exporting canvas:', error)
+      throw error
+    }
   }
 
   // Main sync function
@@ -472,6 +584,42 @@ function App(): JSX.Element {
           </div>
           
           <button className="btn-secondary" onClick={clearCanvas}>Clear Canvas</button>
+          
+          {/* Export Controls */}
+          <div className="export-controls">
+            <button 
+              className="btn-export"
+              onClick={() => handleExport('png', 'light')}
+              disabled={!excalidrawAPI}
+              title="Export as PNG (Light)"
+            >
+              📷 PNG Light
+            </button>
+            <button 
+              className="btn-export"
+              onClick={() => handleExport('png', 'dark')}
+              disabled={!excalidrawAPI}
+              title="Export as PNG (Dark)"
+            >
+              🌙 PNG Dark
+            </button>
+            <button 
+              className="btn-export"
+              onClick={() => handleExport('svg', 'light')}
+              disabled={!excalidrawAPI}
+              title="Export as SVG (Light)"
+            >
+              📐 SVG Light
+            </button>
+            <button 
+              className="btn-export"
+              onClick={() => handleExport('svg', 'dark')}
+              disabled={!excalidrawAPI}
+              title="Export as SVG (Dark)"
+            >
+              🌑 SVG Dark
+            </button>
+          </div>
         </div>
       </div>
 

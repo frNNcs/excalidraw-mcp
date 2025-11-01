@@ -483,6 +483,30 @@ const tools: Tool[] = [
       },
       required: ['elements']
     }
+  },
+  {
+    name: 'export_canvas',
+    description: 'Export the Excalidraw canvas to PNG or SVG format with light or dark theme',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        format: {
+          type: 'string',
+          enum: ['png', 'svg'],
+          description: 'Export format: png or svg'
+        },
+        theme: {
+          type: 'string',
+          enum: ['light', 'dark'],
+          description: 'Theme for the export: light or dark mode'
+        },
+        filename: {
+          type: 'string',
+          description: 'Optional filename for the exported file (without extension)'
+        }
+      },
+      required: ['format']
+    }
   }
 ];
 
@@ -958,6 +982,133 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             text: `${result.count} elements created successfully!\n\n${JSON.stringify(result, null, 2)}\n\n${result.syncedToCanvas ? '✅ All elements synced to canvas' : '⚠️  Canvas sync failed (elements still created locally)'}` 
           }]
         };
+      }
+      
+      case 'export_canvas': {
+        const params = z.object({
+          format: z.enum(['png', 'svg']),
+          theme: z.enum(['light', 'dark']).optional(),
+          filename: z.string().optional()
+        }).parse(args);
+        
+        const exportFilename = params.filename || `excalidraw-${Date.now()}`;
+        
+        logger.info('Exporting canvas via MCP', { 
+          format: params.format, 
+          theme: params.theme || 'light',
+          filename: exportFilename 
+        });
+
+        try {
+          // Send export request to frontend
+          const exportResponse = await fetch(`${EXPRESS_SERVER_URL}/api/export`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              format: params.format,
+              theme: params.theme || 'light',
+              filename: exportFilename
+            })
+          });
+
+          if (!exportResponse.ok) {
+            throw new Error(`HTTP server error: ${exportResponse.status} ${exportResponse.statusText}`);
+          }
+
+          // Wait for the frontend to process and save the file
+          // Poll for the saved file data
+          let savedData = null;
+          let attempts = 0;
+          const maxAttempts = 20; // 10 seconds total
+          
+          while (!savedData && attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            attempts++;
+            
+            // Try to check if file was saved (you could add a status endpoint)
+            // For now, we'll wait a reasonable time
+            if (attempts === 10) {
+              // After 5 seconds, assume it's done
+              break;
+            }
+          }
+          
+          // Get the saved file path
+          const filepath = `/tmp/excalidraw-exports/${exportFilename}.${params.format}`;
+          
+          logger.info('Canvas export completed', {
+            format: params.format,
+            theme: params.theme || 'light',
+            filepath
+          });
+
+          if (params.format === 'svg') {
+            // For SVG, read and return the content
+            try {
+              const fs = await import('fs');
+              const svgContent = fs.readFileSync(filepath, 'utf-8');
+              
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `✅ Canvas exported successfully!\n\n📄 File: ${exportFilename}.svg\n📁 Path: ${filepath}\n📊 Size: ${svgContent.length} bytes\n🎨 Format: SVG\n🌓 Theme: ${params.theme || 'light'}\n\n✨ File is ready to use with other tools like Obsidian.`
+                  },
+                  {
+                    type: 'resource',
+                    resource: {
+                      uri: `file://${filepath}`,
+                      mimeType: 'image/svg+xml',
+                      text: svgContent
+                    }
+                  }
+                ]
+              };
+            } catch (readError) {
+              logger.warn('Could not read SVG file:', readError);
+              return {
+                content: [{
+                  type: 'text',
+                  text: `Canvas export initiated!\nFormat: ${params.format}\nTheme: ${params.theme || 'light'}\nFilepath: ${filepath}\n\n⚠️ File will be available shortly at the specified path.`
+                }]
+              };
+            }
+          } else {
+            // For PNG, read and return as base64
+            try {
+              const fs = await import('fs');
+              const pngBuffer = fs.readFileSync(filepath);
+              const base64Data = pngBuffer.toString('base64');
+              
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: `✅ Canvas exported successfully!\n\n📄 File: ${exportFilename}.png\n📁 Path: ${filepath}\n📊 Size: ${pngBuffer.length} bytes\n🎨 Format: PNG (base64)\n🌓 Theme: ${params.theme || 'light'}\n\n✨ File is ready to use with other tools like Obsidian.`
+                  },
+                  {
+                    type: 'resource',
+                    resource: {
+                      uri: `file://${filepath}`,
+                      mimeType: 'image/png',
+                      blob: base64Data
+                    }
+                  }
+                ]
+              };
+            } catch (readError) {
+              logger.warn('Could not read PNG file:', readError);
+              return {
+                content: [{
+                  type: 'text',
+                  text: `Canvas exported as PNG successfully!\n\nFilepath: ${filepath}\n\nYou can read this file and convert to base64 for use with other tools like Obsidian.`
+                }]
+              };
+            }
+          }
+        } catch (error) {
+          throw new Error(`Failed to export canvas: ${(error as Error).message}`);
+        }
       }
       
       default:

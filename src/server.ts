@@ -5,6 +5,7 @@ import { createServer } from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import logger from './utils/logger.js';
 import { 
   elements,
@@ -557,6 +558,106 @@ app.get('/api/sync/status', (req: Request, res: Response) => {
     },
     websocketClients: clients.size
   });
+});
+
+// Export canvas endpoint
+app.post('/api/export', (req: Request, res: Response) => {
+  try {
+    const { format, theme, filename } = req.body;
+    
+    if (!format || !['png', 'svg'].includes(format)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Format must be either "png" or "svg"'
+      });
+    }
+    
+    if (theme && !['light', 'dark'].includes(theme)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Theme must be either "light" or "dark"'
+      });
+    }
+    
+    logger.info('Export request received', { format, theme, filename });
+    
+    // Broadcast export request to frontend
+    broadcast({
+      type: 'export_request',
+      format,
+      theme: theme || 'light',
+      filename: filename || `excalidraw-${Date.now()}`,
+      timestamp: new Date().toISOString()
+    });
+    
+    res.json({
+      success: true,
+      message: `Export request sent to canvas. Format: ${format}, Theme: ${theme || 'light'}`,
+      format,
+      theme: theme || 'light',
+      filename: filename || `excalidraw-${Date.now()}`
+    });
+  } catch (error) {
+    logger.error('Error processing export request:', error);
+    res.status(500).json({
+      success: false,
+      error: (error as Error).message
+    });
+  }
+});
+
+// Save exported file from frontend (receives base64 or SVG string)
+app.post('/api/export/save', express.json({ limit: '50mb' }), (req: Request, res: Response) => {
+  try {
+    const { filename, format, data, dataType } = req.body;
+    
+    if (!filename || !format || !data) {
+      return res.status(400).json({
+        success: false,
+        error: 'Filename, format, and data are required'
+      });
+    }
+    
+    // Use /tmp directory for temporary files
+    const exportsDir = '/tmp/excalidraw-exports';
+    if (!fs.existsSync(exportsDir)) {
+      fs.mkdirSync(exportsDir, { recursive: true });
+    }
+    
+    const fullFilename = `${filename}.${format}`;
+    const filePath = path.join(exportsDir, fullFilename);
+    
+    // Save the file based on data type
+    if (dataType === 'base64' && format === 'png') {
+      // Remove data URL prefix if present
+      const base64Data = data.replace(/^data:image\/png;base64,/, '');
+      fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+    } else if (format === 'svg') {
+      // Save SVG as text
+      fs.writeFileSync(filePath, data, 'utf-8');
+    } else {
+      // Default: save as-is
+      fs.writeFileSync(filePath, data);
+    }
+    
+    logger.info('File saved successfully', { filePath, size: data.length, format });
+    
+    res.json({
+      success: true,
+      message: 'File saved successfully',
+      filepath: filePath,
+      filename: fullFilename,
+      data: data,
+      dataType: dataType || (format === 'svg' ? 'svg' : 'base64'),
+      size: data.length
+    });
+  } catch (error) {
+    logger.error('Error saving exported file:', error);
+    res.status(500).json({
+      success: false,
+      error: (error as Error).message
+    });
+  }
 });
 
 // Error handling middleware

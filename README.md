@@ -550,6 +550,55 @@ The canvas server provides these REST endpoints:
 ### **Resource Access**
 - `get_resource` - Access scene, library, theme, or elements data
 
+### **Export & Download** ✨ NEW!
+- `export_canvas` - Export canvas to PNG or SVG with light/dark theme support
+
+## 🎨 Export Canvas Feature
+
+The export feature allows you to download your Excalidraw canvas in PNG or SVG format with customizable theme options.
+
+### **Using MCP Tool**
+
+```javascript
+// Export as PNG with light theme
+{
+  "format": "png",
+  "theme": "light",
+  "filename": "my-diagram"
+}
+
+// Export as SVG with dark theme
+{
+  "format": "svg",
+  "theme": "dark",
+  "filename": "my-dark-diagram"
+}
+```
+
+### **Using Canvas UI**
+
+The canvas interface provides four quick export buttons:
+- 📷 **PNG Light** - Export as PNG with light background
+- 🌙 **PNG Dark** - Export as PNG with dark background
+- 📐 **SVG Light** - Export as SVG with light background
+- 🌑 **SVG Dark** - Export as SVG with dark background
+
+### **Export Options**
+
+| Parameter  | Type                | Required | Description                       |
+| ---------- | ------------------- | -------- | --------------------------------- |
+| `format`   | `'png' \| 'svg'`    | Yes      | Export format                     |
+| `theme`    | `'light' \| 'dark'` | No       | Theme mode (default: 'light')     |
+| `filename` | `string`            | No       | Custom filename without extension |
+
+### **Features**
+- ✅ High-quality PNG exports (95% quality)
+- ✅ Vector SVG exports for scalability
+- ✅ Automatic dark/light theme switching
+- ✅ Custom background colors based on theme
+- ✅ Automatic file download in browser
+- ✅ Preserves all element properties and styles
+
 ## 🏗️ Development Architecture
 
 ### **Frontend** (`frontend/src/`)

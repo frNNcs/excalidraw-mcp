@@ -176,7 +176,8 @@ export type WebSocketMessageType =
   | 'elements_batch_created'
   | 'elements_synced'
   | 'sync_status'
-  | 'mermaid_convert';
+  | 'mermaid_convert'
+  | 'export_request';
 
 export interface InitialElementsMessage extends WebSocketMessage {
   type: 'initial_elements';
@@ -213,6 +214,14 @@ export interface MermaidConvertMessage extends WebSocketMessage {
   type: 'mermaid_convert';
   mermaidDiagram: string;
   config?: MermaidConfig;
+  timestamp: string;
+}
+
+export interface ExportRequestMessage extends WebSocketMessage {
+  type: 'export_request';
+  format: 'png' | 'svg';
+  theme: 'light' | 'dark';
+  filename: string;
   timestamp: string;
 }
 
