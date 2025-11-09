@@ -23,6 +23,26 @@ import {
   ExcalidrawElementType,
   validateElement
 } from './types.js';
+import { 
+  CreateElementSchema,
+  UpdateElementSchema,
+  ElementIdSchema,
+  ElementIdsSchema,
+  GroupIdSchema,
+  AlignElementsSchema,
+  DistributeElementsSchema,
+  QuerySchema,
+  ResourceSchema,
+  MermaidConversionSchema,
+  BatchCreateElementsSchema,
+  BaseElementPropertiesSchema
+} from './utils/schemas.js';
+import { 
+  convertTextToLabel,
+  createElementWithMetadata,
+  updateElementWithMetadata,
+  batchCreateElementsWithMetadata
+} from './utils/elementHelpers.js';
 import fetch from 'node-fetch';
 
 // Load environment variables
@@ -176,57 +196,6 @@ const sceneState: SceneState = {
   selectedElements: new Set(),
   groups: new Map()
 };
-
-// Schema definitions using zod
-const ElementSchema = z.object({
-  type: z.enum(Object.values(EXCALIDRAW_ELEMENT_TYPES) as [ExcalidrawElementType, ...ExcalidrawElementType[]]),
-  x: z.number(),
-  y: z.number(),
-  width: z.number().optional(),
-  height: z.number().optional(),
-  points: z.array(z.object({ x: z.number(), y: z.number() })).optional(),
-  backgroundColor: z.string().optional(),
-  strokeColor: z.string().optional(),
-  strokeWidth: z.number().optional(),
-  roughness: z.number().optional(),
-  opacity: z.number().optional(),
-  text: z.string().optional(),
-  fontSize: z.number().optional(),
-  fontFamily: z.string().optional(),
-  groupIds: z.array(z.string()).optional(),
-  locked: z.boolean().optional()
-});
-
-const ElementIdSchema = z.object({
-  id: z.string()
-});
-
-const ElementIdsSchema = z.object({
-  elementIds: z.array(z.string())
-});
-
-const GroupIdSchema = z.object({
-  groupId: z.string()
-});
-
-const AlignElementsSchema = z.object({
-  elementIds: z.array(z.string()),
-  alignment: z.enum(['left', 'center', 'right', 'top', 'middle', 'bottom'])
-});
-
-const DistributeElementsSchema = z.object({
-  elementIds: z.array(z.string()),
-  direction: z.enum(['horizontal', 'vertical'])
-});
-
-const QuerySchema = z.object({
-  type: z.enum(Object.values(EXCALIDRAW_ELEMENT_TYPES) as [ExcalidrawElementType, ...ExcalidrawElementType[]]).optional(),
-  filter: z.record(z.any()).optional()
-});
-
-const ResourceSchema = z.object({
-  resource: z.enum(['scene', 'library', 'theme', 'elements'])
-});
 
 // Tool definitions
 const tools: Tool[] = [
@@ -503,23 +472,6 @@ const server = new Server(
   }
 );
 
-// Helper function to convert text property to label format for Excalidraw
-function convertTextToLabel(element: ServerElement): ServerElement {
-  const { text, ...rest } = element;
-  if (text) {
-    // For standalone text elements, keep text as direct property
-    if (element.type === 'text') {
-      return element; // Keep text as direct property
-    }
-    // For other elements (rectangle, ellipse, diamond), convert to label format
-    return {
-      ...rest,
-      label: { text }
-    } as ServerElement;
-  }
-  return element;
-}
-
 // Set up request handler for tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
   try {
@@ -528,17 +480,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     
     switch (name) {
       case 'create_element': {
-        const params = ElementSchema.parse(args);
+        const params = BaseElementPropertiesSchema.parse(args);
         logger.info('Creating element via MCP', { type: params.type });
 
-        const id = generateId();
-        const element: ServerElement = {
-          id,
-          ...params,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          version: 1
-        };
+        // Use shared helper to create element with metadata
+        const element = createElementWithMetadata(params as any);
 
         // Convert text to label format for Excalidraw
         const excalidrawElement = convertTextToLabel(element);
@@ -565,16 +511,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
       
       case 'update_element': {
-        const params = ElementIdSchema.merge(ElementSchema.partial()).parse(args);
+        const params = UpdateElementSchema.parse(args);
         const { id, ...updates } = params;
         
         if (!id) throw new Error('Element ID is required');
 
-        // Build update payload with timestamp and version increment
+        // Build update payload
         const updatePayload: Partial<ServerElement> & { id: string } = {
           id,
-          ...updates,
-          updatedAt: new Date().toISOString()
+          ...updates
         };
 
         // Convert text to label format for Excalidraw
@@ -858,20 +803,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
       
       case 'create_from_mermaid': {
-        const params = z.object({
-          mermaidDiagram: z.string(),
-          config: z.object({
-            startOnLoad: z.boolean().optional(),
-            flowchart: z.object({
-              curve: z.enum(['linear', 'basis']).optional()
-            }).optional(),
-            themeVariables: z.object({
-              fontSize: z.string().optional()
-            }).optional(),
-            maxEdges: z.number().optional(),
-            maxTextSize: z.number().optional()
-          }).optional()
-        }).parse(args);
+        const params = MermaidConversionSchema.parse(args);
         
         logger.info('Creating Excalidraw elements from Mermaid diagram via MCP', {
           diagramLength: params.mermaidDiagram.length,
@@ -912,29 +844,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
       
       case 'batch_create_elements': {
-        const params = z.object({ elements: z.array(ElementSchema) }).parse(args);
+        const params = BatchCreateElementsSchema.parse(args);
         logger.info('Batch creating elements via MCP', { count: params.elements.length });
 
-        const createdElements: ServerElement[] = [];
+        // Use shared helper to create elements with metadata
+        const createdElements = batchCreateElementsWithMetadata(params.elements as any);
         
-        // Create each element with unique ID
-        for (const elementData of params.elements) {
-          const id = generateId();
-          const element: ServerElement = {
-            id,
-            ...elementData,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            version: 1
-          };
-          
-          // Convert text to label format for Excalidraw
-          const excalidrawElement = convertTextToLabel(element);
-          createdElements.push(excalidrawElement);
-        }
+        // Convert text to label format for Excalidraw
+        const excalidrawElements = createdElements.map(element => convertTextToLabel(element));
         
         // Create all elements directly on HTTP server (no local storage)
-        const canvasElements = await batchCreateElementsOnCanvas(createdElements);
+        const canvasElements = await batchCreateElementsOnCanvas(excalidrawElements);
         
         if (!canvasElements) {
           throw new Error('Failed to batch create elements: HTTP server unavailable');
@@ -947,7 +867,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
           syncedToCanvas: true
         };
         
-        logger.info('Batch elements created via MCP and synced to canvas', { 
+        logger.info('Batch elements created via MCP and synced to canvas', {
           count: result.count,
           synced: result.syncedToCanvas 
         });
