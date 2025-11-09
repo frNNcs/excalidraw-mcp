@@ -20,6 +20,15 @@ import {
   SyncStatusMessage,
   InitialElementsMessage
 } from './types.js';
+import { 
+  CreateElementSchema,
+  UpdateElementSchema
+} from './utils/schemas.js';
+import { 
+  createElementWithMetadata,
+  updateElementWithMetadata,
+  batchCreateElementsWithMetadata
+} from './utils/elementHelpers.js';
 import { z } from 'zod';
 import WebSocket from 'ws';
 
@@ -87,51 +96,6 @@ wss.on('connection', (ws: WebSocket) => {
   });
 });
 
-// Schema validation
-const CreateElementSchema = z.object({
-  id: z.string().optional(), // Allow passing ID for MCP sync
-  type: z.enum(Object.values(EXCALIDRAW_ELEMENT_TYPES) as [ExcalidrawElementType, ...ExcalidrawElementType[]]),
-  x: z.number(),
-  y: z.number(),
-  width: z.number().optional(),
-  height: z.number().optional(),
-  backgroundColor: z.string().optional(),
-  strokeColor: z.string().optional(),
-  strokeWidth: z.number().optional(),
-  roughness: z.number().optional(),
-  opacity: z.number().optional(),
-  text: z.string().optional(),
-  label: z.object({
-    text: z.string()
-  }).optional(),
-  fontSize: z.number().optional(),
-  fontFamily: z.string().optional(),
-  groupIds: z.array(z.string()).optional(),
-  locked: z.boolean().optional()
-});
-
-const UpdateElementSchema = z.object({
-  id: z.string(),
-  type: z.enum(Object.values(EXCALIDRAW_ELEMENT_TYPES) as [ExcalidrawElementType, ...ExcalidrawElementType[]]).optional(),
-  x: z.number().optional(),
-  y: z.number().optional(),
-  width: z.number().optional(),
-  height: z.number().optional(),
-  backgroundColor: z.string().optional(),
-  strokeColor: z.string().optional(),
-  strokeWidth: z.number().optional(),
-  roughness: z.number().optional(),
-  opacity: z.number().optional(),
-  text: z.string().optional(),
-  label: z.object({
-    text: z.string()
-  }).optional(),
-  fontSize: z.number().optional(),
-  fontFamily: z.string().optional(),
-  groupIds: z.array(z.string()).optional(),
-  locked: z.boolean().optional()
-});
-
 // API Routes
 
 // Get all elements
@@ -158,17 +122,11 @@ app.post('/api/elements', (req: Request, res: Response) => {
     const params = CreateElementSchema.parse(req.body);
     logger.info('Creating element via API', { type: params.type });
 
-    // Prioritize passed ID (for MCP sync), otherwise generate new ID
-    const id = params.id || generateId();
-    const element: ServerElement = {
-      id,
-      ...params,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      version: 1
-    };
+    // Use shared helper to create element with metadata
+    const { id: providedId, ...elementData } = params;
+    const element = createElementWithMetadata(elementData as any, providedId);
 
-    elements.set(id, element);
+    elements.set(element.id, element);
     
     // Broadcast to all connected clients
     const message: ElementCreatedMessage = {
@@ -211,12 +169,8 @@ app.put('/api/elements/:id', (req: Request, res: Response) => {
       });
     }
 
-    const updatedElement: ServerElement = {
-      ...existingElement,
-      ...updates,
-      updatedAt: new Date().toISOString(),
-      version: (existingElement.version || 0) + 1
-    };
+    // Use shared helper to update element with metadata
+    const updatedElement = updateElementWithMetadata(existingElement, updates);
 
     elements.set(id, updatedElement);
     
@@ -361,21 +315,19 @@ app.post('/api/elements/batch', (req: Request, res: Response) => {
       });
     }
     
-    const createdElements: ServerElement[] = [];
+    // Validate each element and use shared helper to create with metadata
+    const validatedElements = elementsToCreate.map(elementData => 
+      CreateElementSchema.parse(elementData)
+    );
     
-    elementsToCreate.forEach(elementData => {
-      const params = CreateElementSchema.parse(elementData);
-      const id = generateId();
-      const element: ServerElement = {
-        id,
-        ...params,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        version: 1
-      };
-      
-      elements.set(id, element);
-      createdElements.push(element);
+    // Extract IDs and create elements using shared helper
+    const createdElements = validatedElements.map(({ id: providedId, ...elementData }) => 
+      createElementWithMetadata(elementData as any, providedId)
+    );
+    
+    // Store all elements
+    createdElements.forEach(element => {
+      elements.set(element.id, element);
     });
     
     // Broadcast to all connected clients
